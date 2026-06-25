@@ -20,11 +20,11 @@ interface CalculationResult {
 
 export default function AdvancedCalculator() {
   const [method, setMethod] = useState<string>("gaussian");
-  const [matrixInput, setMatrixInput] = useState<string>("[[2,1,-1,8],[0,3,1,10],[1,-1,1,1]]"); 
-  const [functionInput, setFunctionInput] = useState<string>("x * x"); 
+  const [matrixInput, setMatrixInput] = useState<string>("[[2,1,-1,8],[0,3,1,10],[1,-1,1,1]]");
+  const [functionInput, setFunctionInput] = useState<string>("x * x");
   const [integrationLimits, setIntegrationLimits] = useState<IntegrationLimits>({ a: 0, b: 2, n: 6 });
   const [eulerParams, setEulerParams] = useState<EulerParams>({ x0: 0, y0: 1, h: 0.2, xEnd: 1 });
-  const [exactValue, setExactValue] = useState<string>(""); 
+  const [exactValue, setExactValue] = useState<string>("");
   const [result, setResult] = useState<CalculationResult | null>(null);
   const [iterationSteps, setIterationSteps] = useState<string[]>([]);
 
@@ -38,13 +38,13 @@ export default function AdvancedCalculator() {
   };
 
   const calculate = () => {
-    setIterationSteps([]); 
+    setIterationSteps([]);
     setResult(null);
     try {
       if (method === "gaussian" || method === "pivoting" || method === "lu") {
         const parsed = JSON.parse(matrixInput);
         if (!Array.isArray(parsed)) throw new Error("Matrix must be a valid JSON Array.");
-        
+
         const A: number[][] = parsed.map((row: unknown) => {
           if (!Array.isArray(row)) throw new Error("Matrix rows must be arrays.");
           return row.map((val: unknown) => {
@@ -54,8 +54,8 @@ export default function AdvancedCalculator() {
           });
         });
 
-        if (method === "gaussian") gaussianElimination(A);
-        if (method === "pivoting") partialPivoting(A);
+        if (method === "gaussian") naiveGaussianElimination(A);
+        if (method === "pivoting") partialPivotingGaussianElimination(A);
         if (method === "lu") luDecomposition(A);
       } else if (method === "simpson13" || method === "simpson38") {
         const { a, b, n } = integrationLimits;
@@ -75,68 +75,164 @@ export default function AdvancedCalculator() {
     }
   };
 
-  
-  const gaussianElimination = (matrix: number[][]) => {
+
+  const naiveGaussianElimination = (matrix: number[][]) => {
     const n = matrix.length;
-    const logs: string[] = [" Starting Gaussian Elimination...", `Initial Matrix: ${JSON.stringify(matrix)}`];
+    const logs: string[] = [
+      "Starting Naive Gaussian Elimination...",
+      `Initial Matrix: ${JSON.stringify(matrix)}`
+    ];
 
-    for (let i = 0; i < n; i++) {
-      let maxRow = i;
-      for (let k = i + 1; k < n; k++) {
-        if (Math.abs(matrix[k][i]) > Math.abs(matrix[maxRow][i])) maxRow = k;
-      }
-      if (maxRow !== i) {
-        [matrix[i], matrix[maxRow]] = [matrix[maxRow], matrix[i]];
-        logs.push(` [Pivoting]: Swapped Row ${i+1} with Row ${maxRow+1} to maximize pivot element.`);
+    // Forward Elimination
+    for (let i = 0; i < n - 1; i++) {
+
+      if (matrix[i][i] === 0) {
+        logs.push(`ERROR: Zero pivot encountered at Row ${i + 1}. Naive elimination cannot proceed.`);
+        setIterationSteps(logs);
+        return;
       }
 
-      logs.push(` Pivot element chosen: A[${i+1}][${i+1}] = ${matrix[i][i].toFixed(4)}`);
+      logs.push(
+        `Pivot Element: A[${i + 1}][${i + 1}] = ${matrix[i][i].toFixed(4)}`
+      );
 
       for (let k = i + 1; k < n; k++) {
         const factor = matrix[k][i] / matrix[i][i];
-        logs.push(` Row Op: R${k+1} = R${k+1} - (${factor.toFixed(4)}) * R${i+1}`);
+
+        logs.push(
+          `R${k + 1} = R${k + 1} - (${factor.toFixed(4)}) × R${i + 1}`
+        );
+
         for (let j = i; j <= n; j++) {
           matrix[k][j] -= factor * matrix[i][j];
         }
-        logs.push(` Result Matrix: ${JSON.stringify(matrix.map(r => r.map(v => parseFloat(v.toFixed(4)))))}`);
+
+        logs.push(
+          `Matrix: ${JSON.stringify(
+            matrix.map(r => r.map(v => +v.toFixed(4)))
+          )}`
+        );
       }
     }
-    
+
+    // Back Substitution
     const x = new Array(n).fill(0);
-    logs.push(" Backward Substitution Phase initiated...");
+
+    logs.push("Starting Back Substitution...");
+
     for (let i = n - 1; i >= 0; i--) {
       let sum = matrix[i][n];
-      let stepExpr = `x${i+1} = (${matrix[i][n].toFixed(4)}`;
+
       for (let j = i + 1; j < n; j++) {
         sum -= matrix[i][j] * x[j];
-        stepExpr += ` - (${matrix[i][j].toFixed(4)} * ${x[j].toFixed(4)})`;
       }
+
       x[i] = sum / matrix[i][i];
-      stepExpr += `) / ${matrix[i][i].toFixed(4)} = ${x[i].toFixed(4)}`;
-      logs.push(` Step x${i+1}: ${stepExpr}`);
+
+      logs.push(`x${i + 1} = ${x[i].toFixed(4)}`);
     }
 
     setIterationSteps(logs);
-    setResult({ "Solutions": x.map((val, idx) => `x${idx + 1} = ${val.toFixed(4)}`).join(", ") });
+
+    setResult({
+      Solutions: x
+        .map((v, i) => `x${i + 1} = ${v.toFixed(4)}`)
+        .join(", ")
+    });
   };
 
-  const partialPivoting = (matrix: number[][]) => {
+  const partialPivotingGaussianElimination = (matrix: number[][]) => {
     const n = matrix.length;
-    const logs: string[] = [" Analyzing Partial Pivoting layout...", `Original State: ${JSON.stringify(matrix)}`];
-    for (let i = 0; i < n; i++) {
+
+    const logs: string[] = [
+      "Starting Gaussian Elimination with Partial Pivoting...",
+      `Initial Matrix: ${JSON.stringify(matrix)}`
+    ];
+
+    // Forward Elimination
+    for (let i = 0; i < n - 1; i++) {
+
+      // Find pivot row
       let maxRow = i;
+
       for (let k = i + 1; k < n; k++) {
-        if (Math.abs(matrix[k][i]) > Math.abs(matrix[maxRow][i])) maxRow = k;
+        if (
+          Math.abs(matrix[k][i]) >
+          Math.abs(matrix[maxRow][i])
+        ) {
+          maxRow = k;
+        }
       }
+
+      // Swap if needed
       if (maxRow !== i) {
-        [matrix[i], matrix[maxRow]] = [matrix[maxRow], matrix[i]];
-        logs.push(` [Iteration ${i+1}]: Row ${i+1} swapped with Row ${maxRow+1} (Max pivot amplitude found: ${matrix[i][i]})`);
-      } else {
-        logs.push(` [Iteration ${i+1}]: Row ${i+1} is already scaled with maximum coefficient (${matrix[i][i]}). No swap required.`);
+        [matrix[i], matrix[maxRow]] =
+          [matrix[maxRow], matrix[i]];
+
+        logs.push(
+          `Pivoting: Swapped Row ${i + 1} with Row ${maxRow + 1}`
+        );
+      }
+
+      if (matrix[i][i] === 0) {
+        logs.push(`ERROR: Matrix is singular.`);
+        setIterationSteps(logs);
+        return;
+      }
+
+      logs.push(
+        `Pivot Element: ${matrix[i][i].toFixed(4)}`
+      );
+
+      // Elimination
+      for (let k = i + 1; k < n; k++) {
+
+        const factor =
+          matrix[k][i] / matrix[i][i];
+
+        logs.push(
+          `R${k + 1} = R${k + 1} - (${factor.toFixed(4)}) × R${i + 1}`
+        );
+
+        for (let j = i; j <= n; j++) {
+          matrix[k][j] -= factor * matrix[i][j];
+        }
+
+        logs.push(
+          `Matrix: ${JSON.stringify(
+            matrix.map(r => r.map(v => +v.toFixed(4)))
+          )}`
+        );
       }
     }
+
+    // Back Substitution
+    const x = new Array(n).fill(0);
+
+    logs.push("Starting Back Substitution...");
+
+    for (let i = n - 1; i >= 0; i--) {
+
+      let sum = matrix[i][n];
+
+      for (let j = i + 1; j < n; j++) {
+        sum -= matrix[i][j] * x[j];
+      }
+
+      x[i] = sum / matrix[i][i];
+
+      logs.push(
+        `x${i + 1} = ${x[i].toFixed(4)}`
+      );
+    }
+
     setIterationSteps(logs);
-    setResult({ "Pivoted Matrix": JSON.stringify(matrix) });
+
+    setResult({
+      Solutions: x
+        .map((v, i) => `x${i + 1} = ${v.toFixed(4)}`)
+        .join(", ")
+    });
   };
 
   const luDecomposition = (matrix: number[][]) => {
@@ -150,14 +246,14 @@ export default function AdvancedCalculator() {
         let sum = 0;
         for (let j = 0; j < i; j++) sum += L[i][j] * U[j][k];
         U[i][k] = matrix[i][k] - sum;
-        logs.push(` Compute U[${i+1}][${k+1}]: ${matrix[i][k]} - (${sum.toFixed(4)}) = ${U[i][k].toFixed(4)}`);
+        logs.push(` Compute U[${i + 1}][${k + 1}]: ${matrix[i][k]} - (${sum.toFixed(4)}) = ${U[i][k].toFixed(4)}`);
       }
       for (let k = i + 1; k < n; k++) {
         let sum = 0;
         for (let j = 0; j < i; j++) sum += L[k][j] * U[j][i];
         if (Math.abs(U[i][i]) < 1e-9) throw new Error("Zero pivot detected on U diagonal. LU failed.");
         L[k][i] = (matrix[k][i] - sum) / U[i][i];
-        logs.push(` Compute L[${k+1}][${i+1}]: (${matrix[k][i]} - ${sum.toFixed(4)}) / ${U[i][i].toFixed(4)} = ${L[k][i].toFixed(4)}`);
+        logs.push(` Compute L[${k + 1}][${i + 1}]: (${matrix[k][i]} - ${sum.toFixed(4)}) / ${U[i][i].toFixed(4)} = ${L[k][i].toFixed(4)}`);
       }
     }
     setIterationSteps(logs);
@@ -168,7 +264,7 @@ export default function AdvancedCalculator() {
     if (n % 2 !== 0) throw new Error("Simpson's 1/3 Rule requires an EVEN number of intervals (n).");
     const h = (b - a) / n;
     const logs: string[] = ["Simpson's 1/3 Rule Quadrature Math:", `Step size (h) = (${b} - ${a}) / ${n} = ${h.toFixed(4)}`];
-    
+
     const f_a = evaluateFunction(expr, a);
     const f_b = evaluateFunction(expr, b);
     let sum = f_a + f_b;
@@ -248,10 +344,10 @@ export default function AdvancedCalculator() {
       const ev = parseFloat(exactValue);
       const absError = Math.abs(ev - approx);
       const relError = (absError / ev) * 100;
-      setResult({ 
-        "Approximated Value": approx.toFixed(6), 
-        "Absolute Error": absError.toExponential(6), 
-        "Relative Error (%)": `${relError.toFixed(4)}%` 
+      setResult({
+        "Approximated Value": approx.toFixed(6),
+        "Absolute Error": absError.toExponential(6),
+        "Relative Error (%)": `${relError.toFixed(4)}%`
       });
     } else {
       setResult({ "Approximated Value": approx.toFixed(6) });
@@ -280,7 +376,7 @@ export default function AdvancedCalculator() {
           </select>
         </div>
 
-      
+
         <div className="space-y-4 mb-6">
           {["gaussian", "pivoting", "lu"].includes(method) && (
             <div>
@@ -349,7 +445,7 @@ export default function AdvancedCalculator() {
           )}
         </div>
 
-      
+
         <button
           onClick={calculate}
           className="w-full py-3 rounded-lg bg-indigo-600 text-white font-bold text-lg hover:bg-indigo-500 transition active:scale-98 shadow-md"
@@ -357,7 +453,7 @@ export default function AdvancedCalculator() {
           Execute & Parse Steps
         </button>
 
-      
+
         {result && (
           <div className="mt-6 p-4 rounded-xl bg-green-50 dark:bg-zinc-900 border border-green-300">
             <h3 className="font-bold text-lg mb-2 text-green-700 dark:text-green-400">Final Answer Metrics:</h3>
@@ -371,7 +467,7 @@ export default function AdvancedCalculator() {
           </div>
         )}
 
-      
+
         {iterationSteps.length > 0 && (
           <div className="mt-6 p-4 rounded-xl bg-gray-100 dark:bg-zinc-900 border border-gray-300">
             <h3 className="font-bold text-lg mb-3 text-amber-600 dark:text-amber-400">Step-by-Step Explicit Calculation:</h3>
